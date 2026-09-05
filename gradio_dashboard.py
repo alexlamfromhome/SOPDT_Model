@@ -2,18 +2,13 @@ import gradio as gr
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
-from SOPDT_Model import SOPDT_Model
+import requests
 import threading
 import time
 from collections import deque
-from datetime import datetime
 
-# Global state
-model = SOPDT_Model(K=1.0, tau=1.0, zeta=0.7, theta=0.1, dt=0.01)
-Kp = 1.0
-Ki = 0.1
-Kd = 0.05
-setpoint = 1.0
+# FastAPI backend URL
+API_BASE_URL = "http://localhost:8000"
 
 # Data storage for plotting (keep last 500 samples)
 max_history = 500
@@ -22,41 +17,54 @@ output_history = deque(maxlen=max_history)
 setpoint_history = deque(maxlen=max_history)
 control_effort_history = deque(maxlen=max_history)
 error_history = deque(maxlen=max_history)
+velocity_history = deque(maxlen=max_history)
 
-simulation_running = False
-simulation_thread = None
-last_u = 0.0
+monitoring_thread = None
+monitoring_running = False
 sample_counter = 0
 
-def run_simulation_loop(update_frequency=20):
-    """Run the simulation in background"""
-    global model, Kp, Ki, Kd, setpoint, simulation_running, last_u, sample_counter
+def check_api_health():
+    """Check if FastAPI backend is running"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/health", timeout=2)
+        return response.status_code == 200
+    except:
+        return False
+
+def monitor_model():
+    """Monitor model state from FastAPI backend"""
+    global sample_counter, monitoring_running
     
-    dt_sim = 1.0 / update_frequency
-    
-    while simulation_running:
-        if model is not None:
-            # Calculate control effort before step
-            error = setpoint - model.x1
-            P = Kp * error
-            I = Ki * model.integral_error
-            D = Kd * (error - model.prev_error) / model.dt
-            u_unsaturated = P + I + D
-            last_u = np.clip(u_unsaturated, -10, 10)
+    while monitoring_running:
+        try:
+            # Get current state from API
+            response = requests.get(f"{API_BASE_URL}/state", timeout=2)
+            if response.status_code == 200:
+                state = response.json()
+                
+                # Store history
+                time_history.append(sample_counter * 0.05)  # 50ms intervals
+                output_history.append(float(state['x1']))
+                setpoint_history.append(float(state['setpoint']))
+                velocity_history.append(float(state['x2']))
+                
+                # Calculate error
+                error = state['setpoint'] - state['x1']
+                error_history.append(float(error))
+                
+                # Estimate control effort (simplified)
+                P = state['Kp'] * error
+                I = state['Ki'] * state['integral_error']
+                D = state['Kd'] * state['prev_error']
+                u = np.clip(P + I + D, -10, 10)
+                control_effort_history.append(float(u))
+                
+                sample_counter += 1
             
-            # Step the model
-            y = model.step(setpoint, Kp, Ki, Kd)
-            
-            # Store history
-            time_history.append(sample_counter * dt_sim)
-            output_history.append(float(y))
-            setpoint_history.append(float(setpoint))
-            control_effort_history.append(float(last_u))
-            error_history.append(float(error))
-            
-            sample_counter += 1
-        
-        time.sleep(dt_sim)
+            time.sleep(0.05)  # 20 Hz monitoring
+        except Exception as e:
+            print(f"Monitoring error: {e}")
+            time.sleep(0.5)
 
 def create_plots():
     """Create live plots of model outputs"""
@@ -64,6 +72,7 @@ def create_plots():
         # Return empty plot if no data
         fig = go.Figure()
         fig.add_trace(go.Scatter(y=[], mode='lines', name='Empty'))
+        fig.update_layout(title="Waiting for data...", height=800)
         return fig
     
     # Create subplots
@@ -73,7 +82,7 @@ def create_plots():
             "Process Output vs Setpoint",
             "Control Effort",
             "Tracking Error",
-            "System State"
+            "System Velocity"
         ),
         specs=[[{"secondary_y": False}, {"secondary_y": False}],
                [{"secondary_y": False}, {"secondary_y": False}]]
@@ -129,11 +138,11 @@ def create_plots():
         row=2, col=1
     )
     
-    # Plot 4: System states
+    # Plot 4: Velocity
     fig.add_trace(
         go.Scatter(
             x=time_array,
-            y=[model.x2] * len(time_array),  # Show current velocity
+            y=list(velocity_history),
             mode='lines',
             name='Velocity (x2)',
             line=dict(color='purple', width=2)
@@ -154,7 +163,7 @@ def create_plots():
     
     fig.update_layout(
         height=800,
-        title_text="SOPDT Model Real-Time Monitoring",
+        title_text="SOPDT Model Real-Time Monitoring (via FastAPI)",
         showlegend=True,
         hovermode='x unified'
     )
@@ -162,81 +171,144 @@ def create_plots():
     return fig
 
 def update_gains(kp_val, ki_val, kd_val):
-    """Update PID gains"""
-    global Kp, Ki, Kd
-    Kp = float(kp_val)
-    Ki = float(ki_val)
-    Kd = float(kd_val)
-    return f"✓ Gains updated: Kp={Kp:.3f}, Ki={Ki:.3f}, Kd={Kd:.3f}"
+    """Update PID gains via FastAPI"""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/set_gains",
+            json={"Kp": float(kp_val), "Ki": float(ki_val), "Kd": float(kd_val)},
+            timeout=2
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return f"✓ Gains updated: Kp={data['Kp']:.3f}, Ki={data['Ki']:.3f}, Kd={data['Kd']:.3f}"
+        else:
+            return "✗ Failed to update gains"
+    except Exception as e:
+        return f"✗ Error: {str(e)}"
 
 def update_setpoint(sp_val):
-    """Update setpoint"""
-    global setpoint
-    setpoint = float(sp_val)
-    return f"✓ Setpoint updated to {setpoint:.3f}"
+    """Update setpoint via FastAPI"""
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/set_setpoint",
+            json={"setpoint": float(sp_val)},
+            timeout=2
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return f"✓ Setpoint updated to {data['setpoint']:.3f}"
+        else:
+            return "✗ Failed to update setpoint"
+    except Exception as e:
+        return f"✗ Error: {str(e)}"
 
 def start_sim():
-    """Start simulation"""
-    global simulation_running, simulation_thread
-    if simulation_running:
-        return "⚠ Simulation already running"
+    """Start simulation via FastAPI"""
+    global monitoring_running, monitoring_thread
     
-    simulation_running = True
-    simulation_thread = threading.Thread(target=run_simulation_loop, args=(20,), daemon=True)
-    simulation_thread.start()
-    return "▶ Simulation started"
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/start_simulation?update_frequency=20",
+            timeout=2
+        )
+        if response.status_code == 200:
+            if not monitoring_running:
+                monitoring_running = True
+                monitoring_thread = threading.Thread(target=monitor_model, daemon=True)
+                monitoring_thread.start()
+            data = response.json()
+            return f"▶ {data['status']} at {data['update_frequency_hz']} Hz"
+        else:
+            return "✗ Failed to start simulation"
+    except Exception as e:
+        return f"✗ Error: {str(e)}"
 
 def stop_sim():
-    """Stop simulation"""
-    global simulation_running
-    simulation_running = False
-    return "⏹ Simulation stopped"
+    """Stop simulation via FastAPI"""
+    global monitoring_running
+    
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/stop_simulation",
+            timeout=2
+        )
+        monitoring_running = False
+        if response.status_code == 200:
+            data = response.json()
+            return f"⏹ {data['status']}"
+        else:
+            return "✗ Failed to stop simulation"
+    except Exception as e:
+        return f"✗ Error: {str(e)}"
 
 def reset_sim():
     """Reset model and data"""
-    global model, time_history, output_history, setpoint_history, control_effort_history, error_history, sample_counter, simulation_running
-    simulation_running = False
-    time.sleep(0.5)
+    global time_history, output_history, setpoint_history, control_effort_history, error_history, velocity_history, sample_counter, monitoring_running
     
-    model = SOPDT_Model(K=1.0, tau=1.0, zeta=0.7, theta=0.1, dt=0.01)
-    time_history.clear()
-    output_history.clear()
-    setpoint_history.clear()
-    control_effort_history.clear()
-    error_history.clear()
-    sample_counter = 0
-    
-    return "🔄 Model reset"
+    try:
+        monitoring_running = False
+        time.sleep(0.5)
+        
+        time_history.clear()
+        output_history.clear()
+        setpoint_history.clear()
+        control_effort_history.clear()
+        error_history.clear()
+        velocity_history.clear()
+        sample_counter = 0
+        
+        return "🔄 Model and data reset"
+    except Exception as e:
+        return f"✗ Error: {str(e)}"
 
 def get_stats():
-    """Get current statistics"""
-    if len(output_history) == 0:
-        return "No data yet"
-    
-    output_arr = list(output_history)
-    error_arr = list(error_history)
-    
-    return f"""
-    **Current Statistics:**
+    """Get current statistics from API"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/state", timeout=2)
+        if response.status_code == 200:
+            state = response.json()
+            
+            if len(output_history) == 0:
+                return "Waiting for data..."
+            
+            output_arr = list(output_history)
+            error_arr = list(error_history)
+            
+            return f"""
+    **Current Statistics (Live from FastAPI):**
     
     | Metric | Value |
     |--------|-------|
-    | Current Output (x1) | {model.x1:.4f} |
-    | Current Velocity (x2) | {model.x2:.4f} |
-    | Current Error | {error_arr[-1]:.4f} |
+    | Current Output (x1) | {state['x1']:.4f} |
+    | Current Velocity (x2) | {state['x2']:.4f} |
+    | Current Error | {state['setpoint'] - state['x1']:.4f} |
     | Mean Output | {np.mean(output_arr):.4f} |
     | Std Dev Output | {np.std(output_arr):.4f} |
     | Min Output | {np.min(output_arr):.4f} |
     | Max Output | {np.max(output_arr):.4f} |
     | Mean Error | {np.mean(error_arr):.4f} |
-    | Integral Error | {model.integral_error:.4f} |
+    | Integral Error | {state['integral_error']:.4f} |
+    | Current Gains | Kp={state['Kp']:.3f}, Ki={state['Ki']:.3f}, Kd={state['Kd']:.3f} |
     | Samples Collected | {len(output_history)} |
     """
+        else:
+            return "✗ Failed to get statistics"
+    except Exception as e:
+        return f"✗ Error connecting to API: {str(e)}"
+
+def get_api_status():
+    """Check API health"""
+    if check_api_health():
+        return "✓ FastAPI Backend: Connected"
+    else:
+        return "✗ FastAPI Backend: Disconnected (Start main.py first)"
 
 # Create Gradio interface
 with gr.Blocks(title="SOPDT PID Controller", theme=gr.themes.Soft()) as demo:
     gr.Markdown("# SOPDT Model PID Controller - Live Dashboard")
-    gr.Markdown("Real-time monitoring and control of Second-Order Plus Dead Time system with PID controller")
+    gr.Markdown("Real-time monitoring and control via FastAPI backend")
+    
+    api_status = gr.Textbox(label="API Status", interactive=False, scale=1)
     
     with gr.Row():
         with gr.Column(scale=2):
@@ -293,22 +365,24 @@ with gr.Blocks(title="SOPDT PID Controller", theme=gr.themes.Soft()) as demo:
             sim_status = gr.Textbox(label="Simulation Status", value="Ready", interactive=False)
     
     with gr.Row():
-        stats_output = gr.Markdown("### System Statistics\nWaiting for simulation to start...")
+        stats_output = gr.Markdown("### System Statistics\nWaiting for connection...")
     
     gr.Markdown("""
     ### Instructions
-    1. Adjust **Kp, Ki, Kd** sliders to tune controller response
-    2. Set desired **Setpoint** value
-    3. Click **Start** to begin simulation
-    4. Monitor live plots and statistics
-    5. Adjust gains in real-time to see effects
-    6. Click **Stop** to pause, **Reset** to clear data
+    1. **Start FastAPI Backend**: Run `python main.py` in another terminal
+    2. Adjust **Kp, Ki, Kd** sliders to tune controller response
+    3. Set desired **Setpoint** value
+    4. Click **Start** to begin simulation
+    5. Monitor live plots and statistics in real-time
+    6. Adjust gains in real-time to see effects
+    7. Click **Stop** to pause, **Reset** to clear data
     
     ### Tips
     - Start with low Kp and gradually increase
     - Add Ki to eliminate steady-state error
     - Use Kd to reduce overshoot and oscillations
     - Watch the plots to visualize system response
+    - All adjustments are sent to the FastAPI backend
     """)
     
     # Set up event handlers
@@ -339,12 +413,15 @@ with gr.Blocks(title="SOPDT PID Controller", theme=gr.themes.Soft()) as demo:
         outputs=sim_status
     )
     
-    # Auto-update plot and stats
+    # Auto-update plot, stats, and API status
     demo.load(
-        fn=lambda: (create_plots(), get_stats()),
-        outputs=[plot_output, stats_output],
-        every=0.5
+        fn=lambda: (get_api_status(), create_plots(), get_stats()),
+        outputs=[api_status, plot_output, stats_output],
+        every=1
     )
 
 if __name__ == "__main__":
+    print("Starting Gradio Dashboard...")
+    print("Make sure FastAPI backend is running: python main.py")
+    print("Gradio will be available at http://localhost:7860")
     demo.launch(share=False, server_name="0.0.0.0", server_port=7860)
