@@ -5,6 +5,8 @@ import numpy as np
 from SOPDT_Model import SOPDT_Model
 import threading
 import time
+import gradio as gr
+from gradio_dashboard import demo
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -13,11 +15,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Serve the dashboard from the same process as the API.
+app = gr.mount_gradio_app(app, demo, path="/dashboard")
+
 # Global model instance and control parameters
 model: Optional[SOPDT_Model] = None
-Kp = 1.0
-Ki = 0.1
-Kd = 0.05
+Kp = 0.0
+Ki = 0.0
+Kd = 0.0
 setpoint = 0.0
 simulation_running = False
 simulation_thread = None

@@ -48,13 +48,15 @@ pip install numpy fastapi uvicorn
 
 ## Usage
 
-### Running the API Server
+### Running the Application
 
 ```bash
 python main.py
 ```
 
-The API will start on `http://localhost:8000`
+The FastAPI service and Gradio dashboard run in the same process at `http://localhost:8000`.
+
+Open the dashboard at `http://localhost:8000/dashboard`.
 
 Access the interactive API documentation at:
 - Swagger UI: `http://localhost:8000/docs`

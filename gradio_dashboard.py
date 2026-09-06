@@ -10,26 +10,17 @@ from collections import deque
 # FastAPI backend URL
 API_BASE_URL = "http://localhost:8000"
 
-# Data storage for plotting (keep last 500 samples)
-max_history = 500
+# Data storage for plotting (keep 10 minutes at 20 Hz)
+max_history = 12000
 time_history = deque(maxlen=max_history)
 output_history = deque(maxlen=max_history)
 setpoint_history = deque(maxlen=max_history)
 control_effort_history = deque(maxlen=max_history)
 error_history = deque(maxlen=max_history)
-velocity_history = deque(maxlen=max_history)
 
 monitoring_thread = None
 monitoring_running = False
 sample_counter = 0
-
-def check_api_health():
-    """Check if FastAPI backend is running"""
-    try:
-        response = requests.get(f"{API_BASE_URL}/health", timeout=2)
-        return response.status_code == 200
-    except:
-        return False
 
 def monitor_model():
     """Monitor model state from FastAPI backend"""
@@ -46,7 +37,6 @@ def monitor_model():
                 time_history.append(sample_counter * 0.05)  # 50ms intervals
                 output_history.append(float(state['x1']))
                 setpoint_history.append(float(state['setpoint']))
-                velocity_history.append(float(state['x2']))
                 
                 # Calculate error
                 error = state['setpoint'] - state['x1']
@@ -75,16 +65,16 @@ def create_plots():
         fig.update_layout(title="Waiting for data...", height=800)
         return fig
     
-    # Create subplots
+    # The process response spans the full width; the supporting signals share
+    # the second row.
     fig = make_subplots(
         rows=2, cols=2,
         subplot_titles=(
             "Process Output vs Setpoint",
             "Control Effort",
-            "Tracking Error",
-            "System Velocity"
+            "Tracking Error"
         ),
-        specs=[[{"secondary_y": False}, {"secondary_y": False}],
+        specs=[[{"secondary_y": False, "colspan": 2}, None],
                [{"secondary_y": False}, {"secondary_y": False}]]
     )
     
@@ -112,7 +102,6 @@ def create_plots():
         row=1, col=1
     )
     
-    # Plot 2: Control Effort
     fig.add_trace(
         go.Scatter(
             x=time_array,
@@ -122,10 +111,9 @@ def create_plots():
             line=dict(color='green', width=2),
             fill='tozeroy'
         ),
-        row=1, col=2
+        row=2, col=1
     )
     
-    # Plot 3: Error
     fig.add_trace(
         go.Scatter(
             x=time_array,
@@ -135,31 +123,17 @@ def create_plots():
             line=dict(color='orange', width=2),
             fill='tozeroy'
         ),
-        row=2, col=1
-    )
-    
-    # Plot 4: Velocity
-    fig.add_trace(
-        go.Scatter(
-            x=time_array,
-            y=list(velocity_history),
-            mode='lines',
-            name='Velocity (x2)',
-            line=dict(color='purple', width=2)
-        ),
         row=2, col=2
     )
     
     # Update layout
     fig.update_xaxes(title_text="Time (s)", row=1, col=1)
-    fig.update_xaxes(title_text="Time (s)", row=1, col=2)
-    fig.update_xaxes(title_text="Time (s)", row=2, col=1)
     fig.update_xaxes(title_text="Time (s)", row=2, col=2)
+    fig.update_xaxes(title_text="Time (s)", row=2, col=1)
     
     fig.update_yaxes(title_text="Output", row=1, col=1)
-    fig.update_yaxes(title_text="Control (u)", row=1, col=2)
-    fig.update_yaxes(title_text="Error", row=2, col=1)
-    fig.update_yaxes(title_text="Velocity", row=2, col=2)
+    fig.update_yaxes(title_text="Control (u)", row=2, col=1)
+    fig.update_yaxes(title_text="Error", row=2, col=2)
     
     fig.update_layout(
         height=800,
@@ -243,7 +217,7 @@ def stop_sim():
 
 def reset_sim():
     """Reset model and data"""
-    global time_history, output_history, setpoint_history, control_effort_history, error_history, velocity_history, sample_counter, monitoring_running
+    global sample_counter, monitoring_running
     
     try:
         monitoring_running = False
@@ -254,108 +228,64 @@ def reset_sim():
         setpoint_history.clear()
         control_effort_history.clear()
         error_history.clear()
-        velocity_history.clear()
         sample_counter = 0
         
         return "🔄 Model and data reset"
     except Exception as e:
         return f"✗ Error: {str(e)}"
 
-def get_stats():
-    """Get current statistics from API"""
-    try:
-        response = requests.get(f"{API_BASE_URL}/state", timeout=2)
-        if response.status_code == 200:
-            state = response.json()
-            
-            if len(output_history) == 0:
-                return "Waiting for data..."
-            
-            output_arr = list(output_history)
-            error_arr = list(error_history)
-            
-            return f"""
-    **Current Statistics (Live from FastAPI):**
-    
-    | Metric | Value |
-    |--------|-------|
-    | Current Output (x1) | {state['x1']:.4f} |
-    | Current Velocity (x2) | {state['x2']:.4f} |
-    | Current Error | {state['setpoint'] - state['x1']:.4f} |
-    | Mean Output | {np.mean(output_arr):.4f} |
-    | Std Dev Output | {np.std(output_arr):.4f} |
-    | Min Output | {np.min(output_arr):.4f} |
-    | Max Output | {np.max(output_arr):.4f} |
-    | Mean Error | {np.mean(error_arr):.4f} |
-    | Integral Error | {state['integral_error']:.4f} |
-    | Current Gains | Kp={state['Kp']:.3f}, Ki={state['Ki']:.3f}, Kd={state['Kd']:.3f} |
-    | Samples Collected | {len(output_history)} |
-    """
-        else:
-            return "✗ Failed to get statistics"
-    except Exception as e:
-        return f"✗ Error connecting to API: {str(e)}"
-
-def get_api_status():
-    """Check API health"""
-    if check_api_health():
-        return "✓ FastAPI Backend: Connected"
-    else:
-        return "✗ FastAPI Backend: Disconnected (Start main.py first)"
+def refresh_dashboard():
+    """Refresh the live plot."""
+    return create_plots()
 
 # Create Gradio interface
-with gr.Blocks(title="SOPDT PID Controller", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="SOPDT PID Controller") as demo:
     gr.Markdown("# SOPDT Model PID Controller - Live Dashboard")
-    gr.Markdown("Real-time monitoring and control via FastAPI backend")
-    
-    api_status = gr.Textbox(label="API Status", interactive=False, scale=1)
-    
+    gr.Markdown("Real-time monitoring and control via the FastAPI service")
+
+    plot_output = gr.Plot(label="Live System Response")
+
     with gr.Row():
-        with gr.Column(scale=2):
-            plot_output = gr.Plot(label="Live System Response")
-        
-        with gr.Column(scale=1):
-            gr.Markdown("### PID Gains Control")
+        with gr.Column():
+            gr.Markdown("### PID Gains")
             kp_slider = gr.Slider(
                 minimum=0.0,
-                maximum=5.0,
-                value=1.0,
+                maximum=40.0,
+                value=0.0,
                 step=0.01,
                 label="Kp (Proportional)",
-                info="Increase for faster response"
+                info="Updates when released"
             )
             ki_slider = gr.Slider(
                 minimum=0.0,
                 maximum=1.0,
-                value=0.1,
+                value=0.0,
                 step=0.01,
                 label="Ki (Integral)",
-                info="Eliminate steady-state error"
+                info="Updates when released"
             )
             kd_slider = gr.Slider(
                 minimum=0.0,
                 maximum=1.0,
-                value=0.05,
+                value=0.0,
                 step=0.01,
                 label="Kd (Derivative)",
-                info="Dampen oscillations"
+                info="Updates when released"
             )
-            gains_update_btn = gr.Button("Update Gains", variant="primary")
-            gains_status = gr.Textbox(label="Status", value="Ready", interactive=False)
-    
-    with gr.Row():
+            gains_status = gr.Textbox(label="Gain status", value="Ready", interactive=False)
+
         with gr.Column():
-            gr.Markdown("### Setpoint Control")
+            gr.Markdown("### Setpoint")
             setpoint_slider = gr.Slider(
-                minimum=-2.0,
-                maximum=5.0,
-                value=1.0,
+                minimum=-10.0,
+                maximum=50.0,
+                value=0.0,
                 step=0.1,
-                label="Reference Setpoint"
+                label="Reference setpoint",
+                info="Updates when released"
             )
-            setpoint_update_btn = gr.Button("Set Setpoint", variant="primary")
             setpoint_status = gr.Textbox(label="Status", value="Ready", interactive=False)
-        
+
         with gr.Column():
             gr.Markdown("### Simulation Control")
             with gr.Row():
@@ -364,16 +294,13 @@ with gr.Blocks(title="SOPDT PID Controller", theme=gr.themes.Soft()) as demo:
                 reset_btn = gr.Button("🔄 Reset", size="lg")
             sim_status = gr.Textbox(label="Simulation Status", value="Ready", interactive=False)
     
-    with gr.Row():
-        stats_output = gr.Markdown("### System Statistics\nWaiting for connection...")
-    
     gr.Markdown("""
     ### Instructions
-    1. **Start FastAPI Backend**: Run `python main.py` in another terminal
+    1. **Start the application**: Run `python main.py`
     2. Adjust **Kp, Ki, Kd** sliders to tune controller response
     3. Set desired **Setpoint** value
     4. Click **Start** to begin simulation
-    5. Monitor live plots and statistics in real-time
+    5. Monitor the live plots in real-time
     6. Adjust gains in real-time to see effects
     7. Click **Stop** to pause, **Reset** to clear data
     
@@ -382,17 +309,27 @@ with gr.Blocks(title="SOPDT PID Controller", theme=gr.themes.Soft()) as demo:
     - Add Ki to eliminate steady-state error
     - Use Kd to reduce overshoot and oscillations
     - Watch the plots to visualize system response
-    - All adjustments are sent to the FastAPI backend
+    - All adjustments are sent to the FastAPI service
     """)
     
-    # Set up event handlers
-    gains_update_btn.click(
+    # Update controls after the user releases each slider.
+    kp_slider.release(
         fn=update_gains,
         inputs=[kp_slider, ki_slider, kd_slider],
         outputs=gains_status
     )
-    
-    setpoint_update_btn.click(
+    ki_slider.release(
+        fn=update_gains,
+        inputs=[kp_slider, ki_slider, kd_slider],
+        outputs=gains_status
+    )
+    kd_slider.release(
+        fn=update_gains,
+        inputs=[kp_slider, ki_slider, kd_slider],
+        outputs=gains_status
+    )
+
+    setpoint_slider.release(
         fn=update_setpoint,
         inputs=setpoint_slider,
         outputs=setpoint_status
@@ -413,15 +350,16 @@ with gr.Blocks(title="SOPDT PID Controller", theme=gr.themes.Soft()) as demo:
         outputs=sim_status
     )
     
-    # Auto-update plot, stats, and API status
+    # Load immediately, then refresh the live outputs once per second.
     demo.load(
-        fn=lambda: (get_api_status(), create_plots(), get_stats()),
-        outputs=[api_status, plot_output, stats_output],
-        every=1
+        fn=refresh_dashboard,
+        outputs=plot_output,
+    )
+    dashboard_timer = gr.Timer(1)
+    dashboard_timer.tick(
+        fn=refresh_dashboard,
+        outputs=plot_output
     )
 
 if __name__ == "__main__":
-    print("Starting Gradio Dashboard...")
-    print("Make sure FastAPI backend is running: python main.py")
-    print("Gradio will be available at http://localhost:7860")
-    demo.launch(share=False, server_name="0.0.0.0", server_port=7860)
+    print("Start the merged FastAPI and Gradio application with: python main.py")
