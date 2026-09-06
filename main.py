@@ -12,7 +12,7 @@ from gradio_dashboard import demo
 app = FastAPI(
     title="SOPDT Model API",
     description="API for controlling and monitoring a Second-Order Plus Dead Time (SOPDT) system with PID controller",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # Serve the dashboard from the same process as the API.
@@ -27,6 +27,7 @@ model: Optional[SOPDT_Model] = None
 simulation_running = False
 simulation_thread = None
 
+
 # Pydantic models for request/response
 class ModelConfig(BaseModel):
     K: float
@@ -39,13 +40,16 @@ class ModelConfig(BaseModel):
     u_min: float = -np.inf
     u_max: float = np.inf
 
+
 class PIDGains(BaseModel):
     Kp: float
     Ki: float
     Kd: float
 
+
 class SetpointRequest(BaseModel):
     setpoint: float
+
 
 class ModelState(BaseModel):
     x1: float
@@ -57,17 +61,19 @@ class ModelState(BaseModel):
     integral_error: float
     prev_error: float
 
+
 # Simulation loop
 def run_simulation(update_frequency: float = 10.0):
     """Run the model simulation loop at specified frequency (Hz)"""
     global model, Kp, Ki, Kd, setpoint, simulation_running
-    
+
     dt_sim = 1.0 / update_frequency
-    
+
     while simulation_running:
         if model is not None:
             model.step(setpoint, Kp, Ki, Kd)
         time.sleep(dt_sim)
+
 
 def start_simulation_loop(update_frequency: float = 20.0):
     """Start the simulation loop once and return its current status."""
@@ -78,14 +84,14 @@ def start_simulation_loop(update_frequency: float = 20.0):
 
     simulation_running = True
     simulation_thread = threading.Thread(
-        target=run_simulation,
-        args=(update_frequency,),
-        daemon=True
+        target=run_simulation, args=(update_frequency,), daemon=True
     )
     simulation_thread.start()
     return {"status": "Simulation started", "update_frequency_hz": update_frequency}
 
+
 # Endpoints
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -95,11 +101,12 @@ async def startup_event():
     model = SOPDT_Model(K=K, tau=tau, zeta=zeta, theta=theta, dt=0.01)
     start_simulation_loop(update_frequency=20.0)
 
+
 @app.post("/initialize")
 async def initialize_model(config: ModelConfig):
     """
     Initialize or reinitialize the SOPDT model with custom parameters.
-    
+
     Parameters:
     -----------
     K : float - Plant gain
@@ -123,17 +130,20 @@ async def initialize_model(config: ModelConfig):
             sigma1=config.sigma1,
             sigma2=config.sigma2,
             u_min=config.u_min if config.u_min != -np.inf else -np.inf,
-            u_max=config.u_max if config.u_max != np.inf else np.inf
+            u_max=config.u_max if config.u_max != np.inf else np.inf,
         )
         return {"status": "Model initialized successfully", "config": config}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to initialize model: {str(e)}")
+        raise HTTPException(
+            status_code=400, detail=f"Failed to initialize model: {str(e)}"
+        )
+
 
 @app.get("/state", response_model=ModelState)
 async def get_state():
     """
     Get current state of the model and controller.
-    
+
     Returns:
     --------
     x1 : float - Current process output (position)
@@ -148,7 +158,7 @@ async def get_state():
     global model, Kp, Ki, Kd, setpoint
     if model is None:
         raise HTTPException(status_code=503, detail="Model not initialized")
-    
+
     return ModelState(
         x1=float(model.x1),
         x2=float(model.x2),
@@ -157,14 +167,15 @@ async def get_state():
         Kd=Kd,
         setpoint=setpoint,
         integral_error=float(model.integral_error),
-        prev_error=float(model.prev_error)
+        prev_error=float(model.prev_error),
     )
+
 
 @app.post("/set_gains")
 async def set_gains(gains: PIDGains):
     """
     Update PID controller gains.
-    
+
     Parameters:
     -----------
     Kp : float - Proportional gain
@@ -180,11 +191,12 @@ async def set_gains(gains: PIDGains):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to set gains: {str(e)}")
 
+
 @app.post("/set_setpoint")
 async def set_setpoint(request: SetpointRequest):
     """
     Update the desired setpoint (reference value).
-    
+
     Parameters:
     -----------
     setpoint : float - Desired reference value
@@ -196,27 +208,30 @@ async def set_setpoint(request: SetpointRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to set setpoint: {str(e)}")
 
+
 @app.post("/start_simulation")
 async def start_simulation(update_frequency: float = 10.0):
     """
     Start the simulation loop.
-    
+
     Parameters:
     -----------
     update_frequency : float - Update frequency in Hz (default: 10 Hz)
     """
     return start_simulation_loop(update_frequency)
 
+
 @app.post("/stop_simulation")
 async def stop_simulation():
     """Stop the simulation loop."""
     global simulation_running
-    
+
     if not simulation_running:
         return {"status": "Simulation not running"}
-    
+
     simulation_running = False
     return {"status": "Simulation stopped"}
+
 
 @app.get("/simulation_status")
 async def get_simulation_status():
@@ -224,11 +239,14 @@ async def get_simulation_status():
     global simulation_running
     return {"simulation_running": simulation_running}
 
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "model_initialized": model is not None}
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -24,127 +24,137 @@ monitoring_thread = None
 monitoring_running = False
 sample_counter = 0
 
+
 def monitor_model():
     """Monitor model state from FastAPI backend"""
     global sample_counter, monitoring_running
-    
+
     while monitoring_running:
         try:
             # Get current state from API
             response = requests.get(f"{API_BASE_URL}/state", timeout=2)
             if response.status_code == 200:
                 state = response.json()
-                
+
                 # Store history
                 time_history.append(sample_counter * 0.05)  # 50ms intervals
-                output_history.append(float(state['x1']))
-                setpoint_history.append(float(state['setpoint']))
-                
+                output_history.append(float(state["x1"]))
+                setpoint_history.append(float(state["setpoint"]))
+
                 # Calculate error
-                error = state['setpoint'] - state['x1']
+                error = state["setpoint"] - state["x1"]
                 error_history.append(float(error))
-                
+
                 # Estimate control effort (simplified)
-                P = state['Kp'] * error
-                I = state['Ki'] * state['integral_error']
-                D = state['Kd'] * state['prev_error']
+                P = state["Kp"] * error
+                I = state["Ki"] * state["integral_error"]
+                D = state["Kd"] * state["prev_error"]
                 u = np.clip(P + I + D, -10, 10)
                 control_effort_history.append(float(u))
-                
+
                 sample_counter += 1
-            
+
             time.sleep(0.05)  # 20 Hz monitoring
         except Exception as e:
             print(f"Monitoring error: {e}")
             time.sleep(0.5)
+
 
 def create_plots():
     """Create live plots of model outputs"""
     if len(time_history) == 0:
         # Return empty plot if no data
         fig = go.Figure()
-        fig.add_trace(go.Scatter(y=[], mode='lines', name='Empty'))
+        fig.add_trace(go.Scatter(y=[], mode="lines", name="Empty"))
         fig.update_layout(title="Waiting for data...", height=800)
         return fig
-    
+
     # The process response spans the full width; the supporting signals share
     # the second row.
     fig = make_subplots(
-        rows=2, cols=2,
+        rows=2,
+        cols=2,
         subplot_titles=(
             "Process Output vs Setpoint",
             "Control Effort",
-            "Tracking Error"
+            "Tracking Error",
         ),
-        specs=[[{"secondary_y": False, "colspan": 2}, None],
-               [{"secondary_y": False}, {"secondary_y": False}]]
+        specs=[
+            [{"secondary_y": False, "colspan": 2}, None],
+            [{"secondary_y": False}, {"secondary_y": False}],
+        ],
     )
-    
+
     time_array = list(time_history)
-    
+
     # Plot 1: Output and Setpoint
     fig.add_trace(
         go.Scatter(
             x=time_array,
             y=list(output_history),
-            mode='lines',
-            name='Output (x1)',
-            line=dict(color='blue', width=2)
+            mode="lines",
+            name="Output (x1)",
+            line=dict(color="blue", width=2),
         ),
-        row=1, col=1
+        row=1,
+        col=1,
     )
     fig.add_trace(
         go.Scatter(
             x=time_array,
             y=list(setpoint_history),
-            mode='lines',
-            name='Setpoint',
-            line=dict(color='red', width=2, dash='dash')
+            mode="lines",
+            name="Setpoint",
+            line=dict(color="red", width=2, dash="dash"),
         ),
-        row=1, col=1
+        row=1,
+        col=1,
     )
-    
+
     fig.add_trace(
         go.Scatter(
             x=time_array,
             y=list(control_effort_history),
-            mode='lines',
-            name='Control Effort (u)',
-            line=dict(color='green', width=2),
-            fill='tozeroy'
+            mode="lines",
+            name="Control Effort (u)",
+            line=dict(color="green", width=2),
+            fill="tozeroy",
         ),
-        row=2, col=1
+        row=2,
+        col=1,
     )
-    
+
     fig.add_trace(
         go.Scatter(
             x=time_array,
             y=list(error_history),
-            mode='lines',
-            name='Error',
-            line=dict(color='orange', width=2),
-            fill='tozeroy'
+            mode="lines",
+            name="Error",
+            line=dict(color="orange", width=2),
+            fill="tozeroy",
         ),
-        row=2, col=2
+        row=2,
+        col=2,
     )
-    
+
     # Update layout
     fig.update_xaxes(title_text="Time (s)", row=1, col=1)
     fig.update_xaxes(title_text="Time (s)", row=2, col=2)
     fig.update_xaxes(title_text="Time (s)", row=2, col=1)
-    
+
     fig.update_yaxes(title_text="Output", row=1, col=1)
     fig.update_yaxes(title_text="Control (u)", row=2, col=1)
     fig.update_yaxes(title_text="Error", row=2, col=2)
-    
+
     fig.update_layout(
         height=500,
         title_text="SOPDT Model Real-Time Monitoring (via FastAPI)",
         showlegend=True,
-        hovermode='x unified'
+        hovermode="x unified",
     )
-    
+
     return fig
+
 
 def update_gains(kp_val, ki_val, kd_val):
     """Update PID gains via FastAPI"""
@@ -152,7 +162,7 @@ def update_gains(kp_val, ki_val, kd_val):
         response = requests.post(
             f"{API_BASE_URL}/set_gains",
             json={"Kp": float(kp_val), "Ki": float(ki_val), "Kd": float(kd_val)},
-            timeout=2
+            timeout=2,
         )
         if response.status_code == 200:
             data = response.json()
@@ -162,13 +172,12 @@ def update_gains(kp_val, ki_val, kd_val):
     except Exception as e:
         return f"✗ Error: {str(e)}"
 
+
 def update_setpoint(sp_val):
     """Update setpoint via FastAPI"""
     try:
         response = requests.post(
-            f"{API_BASE_URL}/set_setpoint",
-            json={"setpoint": float(sp_val)},
-            timeout=2
+            f"{API_BASE_URL}/set_setpoint", json={"setpoint": float(sp_val)}, timeout=2
         )
         if response.status_code == 200:
             data = response.json()
@@ -178,9 +187,11 @@ def update_setpoint(sp_val):
     except Exception as e:
         return f"✗ Error: {str(e)}"
 
+
 def refresh_dashboard():
     """Refresh the live plot."""
     return create_plots()
+
 
 def initialize_dashboard():
     """Start dashboard monitoring when the page opens."""
@@ -192,6 +203,7 @@ def initialize_dashboard():
         monitoring_thread.start()
 
     return create_plots()
+
 
 # Create Gradio interface
 with gr.Blocks(title="SOPDT PID Controller") as demo:
@@ -252,17 +264,14 @@ with gr.Blocks(title="SOPDT PID Controller") as demo:
         fn=update_setpoint,
         inputs=setpoint_slider,
     )
-    
+
     # Start monitoring immediately, then refresh the live plot once per second.
     demo.load(
         fn=initialize_dashboard,
         outputs=plot_output,
     )
     dashboard_timer = gr.Timer(1)
-    dashboard_timer.tick(
-        fn=refresh_dashboard,
-        outputs=plot_output
-    )
+    dashboard_timer.tick(fn=refresh_dashboard, outputs=plot_output)
 
 if __name__ == "__main__":
     print("Start the merged FastAPI and Gradio application with: python main.py")
