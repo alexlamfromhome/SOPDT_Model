@@ -1,6 +1,16 @@
 import numpy as np
 from collections import deque
 
+Kp = 10.0
+Ki = 0.0
+Kd = 0.0
+setpoint = 10.0
+
+K=1.0
+tau=1.0
+zeta=0.7
+theta=0.1
+
 class SOPDT_Model:
     def __init__(self, K, tau, zeta, theta, dt, sigma1=0.0, sigma2=0.0, u_min=-np.inf, u_max=np.inf):
         """

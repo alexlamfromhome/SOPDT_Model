@@ -7,6 +7,8 @@ import threading
 import time
 from collections import deque
 
+from SOPDT_Model import Kp, Ki, Kd, setpoint
+
 # FastAPI backend URL
 API_BASE_URL = "http://localhost:8000"
 
@@ -136,7 +138,7 @@ def create_plots():
     fig.update_yaxes(title_text="Error", row=2, col=2)
     
     fig.update_layout(
-        height=800,
+        height=500,
         title_text="SOPDT Model Real-Time Monitoring (via FastAPI)",
         showlegend=True,
         hovermode='x unified'
@@ -190,7 +192,7 @@ def start_sim():
                 monitoring_running = True
                 monitoring_thread = threading.Thread(target=monitor_model, daemon=True)
                 monitoring_thread.start()
-            data = response.json()
+                data = response.json()
             return f"▶ {data['status']} at {data['update_frequency_hz']} Hz"
         else:
             return "✗ Failed to start simulation"
@@ -220,6 +222,10 @@ def reset_sim():
     global sample_counter, monitoring_running
     
     try:
+        response = requests.post(
+            f"{API_BASE_URL}/initialize",
+            timeout=2
+        )
         monitoring_running = False
         time.sleep(0.5)
         
@@ -241,50 +247,43 @@ def refresh_dashboard():
 # Create Gradio interface
 with gr.Blocks(title="SOPDT PID Controller") as demo:
     gr.Markdown("# SOPDT Model PID Controller - Live Dashboard")
-    gr.Markdown("Real-time monitoring and control via the FastAPI service")
 
     plot_output = gr.Plot(label="Live System Response")
 
     with gr.Row():
         with gr.Column():
-            gr.Markdown("### PID Gains")
-            kp_slider = gr.Slider(
-                minimum=0.0,
-                maximum=40.0,
-                value=0.0,
-                step=0.01,
-                label="Kp (Proportional)",
-                info="Updates when released"
-            )
-            ki_slider = gr.Slider(
-                minimum=0.0,
-                maximum=1.0,
-                value=0.0,
-                step=0.01,
-                label="Ki (Integral)",
-                info="Updates when released"
-            )
-            kd_slider = gr.Slider(
-                minimum=0.0,
-                maximum=1.0,
-                value=0.0,
-                step=0.01,
-                label="Kd (Derivative)",
-                info="Updates when released"
-            )
-            gains_status = gr.Textbox(label="Gain status", value="Ready", interactive=False)
-
-        with gr.Column():
             gr.Markdown("### Setpoint")
             setpoint_slider = gr.Slider(
                 minimum=-10.0,
                 maximum=50.0,
-                value=0.0,
+                value=setpoint,
                 step=0.1,
                 label="Reference setpoint",
-                info="Updates when released"
             )
-            setpoint_status = gr.Textbox(label="Status", value="Ready", interactive=False)
+
+        with gr.Column():
+            gr.Markdown("### PID Gains")
+            kp_slider = gr.Slider(
+                minimum=0.0,
+                maximum=40.0,
+                value=Kp,
+                step=0.01,
+                label="Kp (Proportional)",
+            )
+            ki_slider = gr.Slider(
+                minimum=0.0,
+                maximum=1.0,
+                value=Ki,
+                step=0.01,
+                label="Ki (Integral)",
+            )
+            kd_slider = gr.Slider(
+                minimum=0.0,
+                maximum=1.0,
+                value=Kd,
+                step=0.01,
+                label="Kd (Derivative)",
+            )
 
         with gr.Column():
             gr.Markdown("### Simulation Control")
@@ -293,46 +292,24 @@ with gr.Blocks(title="SOPDT PID Controller") as demo:
                 stop_btn = gr.Button("⏹ Stop", variant="stop", size="lg")
                 reset_btn = gr.Button("🔄 Reset", size="lg")
             sim_status = gr.Textbox(label="Simulation Status", value="Ready", interactive=False)
-    
-    gr.Markdown("""
-    ### Instructions
-    1. **Start the application**: Run `python main.py`
-    2. Adjust **Kp, Ki, Kd** sliders to tune controller response
-    3. Set desired **Setpoint** value
-    4. Click **Start** to begin simulation
-    5. Monitor the live plots in real-time
-    6. Adjust gains in real-time to see effects
-    7. Click **Stop** to pause, **Reset** to clear data
-    
-    ### Tips
-    - Start with low Kp and gradually increase
-    - Add Ki to eliminate steady-state error
-    - Use Kd to reduce overshoot and oscillations
-    - Watch the plots to visualize system response
-    - All adjustments are sent to the FastAPI service
-    """)
-    
+        
     # Update controls after the user releases each slider.
     kp_slider.release(
         fn=update_gains,
         inputs=[kp_slider, ki_slider, kd_slider],
-        outputs=gains_status
     )
     ki_slider.release(
         fn=update_gains,
         inputs=[kp_slider, ki_slider, kd_slider],
-        outputs=gains_status
     )
     kd_slider.release(
         fn=update_gains,
         inputs=[kp_slider, ki_slider, kd_slider],
-        outputs=gains_status
     )
 
     setpoint_slider.release(
         fn=update_setpoint,
         inputs=setpoint_slider,
-        outputs=setpoint_status
     )
     
     start_btn.click(

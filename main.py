@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import numpy as np
-from SOPDT_Model import SOPDT_Model
+from SOPDT_Model import SOPDT_Model, Kp, Ki, Kd, setpoint, K, tau, zeta, theta
 import threading
 import time
 import gradio as gr
@@ -20,10 +20,10 @@ app = gr.mount_gradio_app(app, demo, path="/dashboard")
 
 # Global model instance and control parameters
 model: Optional[SOPDT_Model] = None
-Kp = 0.0
-Ki = 0.0
-Kd = 0.0
-setpoint = 0.0
+# Kp = 0.0
+# Ki = 0.0
+# Kd = 0.0
+# setpoint = 10.0
 simulation_running = False
 simulation_thread = None
 
@@ -76,7 +76,7 @@ async def startup_event():
     """Initialize model on startup"""
     global model
     # Default configuration
-    model = SOPDT_Model(K=1.0, tau=1.0, zeta=0.7, theta=0.1, dt=0.01)
+    model = SOPDT_Model(K=K, tau=tau, zeta=zeta, theta=theta, dt=0.01)
 
 @app.post("/initialize")
 async def initialize_model(config: ModelConfig):
