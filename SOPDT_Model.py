@@ -13,8 +13,8 @@ theta = 0.1  ## Dead time (seconds)
 dt = 0.01  ## Integration time step (seconds)
 sigma1 = 0.0  ## Noise intensity for x1
 sigma2 = 0.0  ## Noise intensity for x2
-u_min = -10.0  ## Minimum control effort saturation limit
-u_max = 10.0  ## Maximum control effort saturation limit
+u_min = -np.inf  ## Minimum control effort saturation limit
+u_max = np.inf  ## Maximum control effort saturation limit
 
 
 class SOPDT_Model:

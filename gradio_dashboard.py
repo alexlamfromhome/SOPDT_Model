@@ -7,13 +7,13 @@ import threading
 import time
 from collections import deque
 
-from SOPDT_Model import Kp, Ki, Kd, setpoint
+from SOPDT_Model import Kp, Ki, Kd, setpoint, u_min, u_max
 
 # FastAPI backend URL
 API_BASE_URL = "http://localhost:8000"
 
-# Data storage for plotting (keep 10 minutes at 20 Hz)
-max_history = 12000
+# Data storage for plotting (keep 5 minutes at 20 Hz)
+max_history = 6000
 time_history = deque(maxlen=max_history)
 output_history = deque(maxlen=max_history)
 setpoint_history = deque(maxlen=max_history)
@@ -49,7 +49,7 @@ def monitor_model():
                 P = state["Kp"] * error
                 I = state["Ki"] * state["integral_error"]
                 D = state["Kd"] * state["prev_error"]
-                u = np.clip(P + I + D, -10, 10)
+                u = np.clip(P + I + D, u_min, u_max)
                 control_effort_history.append(float(u))
 
                 sample_counter += 1
@@ -151,6 +151,7 @@ def create_plots():
         title_text="SOPDT Model Real-Time Monitoring (via FastAPI)",
         showlegend=True,
         hovermode="x unified",
+        legend=dict(xanchor="center", yanchor="bottom", orientation="h", x=0.5, y=-0.2),
     )
 
     return fig
@@ -218,7 +219,7 @@ with gr.Blocks(title="SOPDT PID Controller") as demo:
                 minimum=-10.0,
                 maximum=50.0,
                 value=setpoint,
-                step=0.1,
+                step=1.0,
                 label="Reference setpoint",
             )
 
