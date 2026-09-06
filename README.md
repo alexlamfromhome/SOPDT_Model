@@ -24,7 +24,7 @@ This project simulates a closed-loop control system with the following features:
   - Querying real-time model state
   - Adjusting PID gains dynamically
   - Setting reference setpoints
-  - Starting/stopping simulations
+  - Simulation starts automatically with the application
   - Configuring model parameters
 
 ## Installation
@@ -57,6 +57,8 @@ python main.py
 The FastAPI service and Gradio dashboard run in the same process at `http://localhost:8000`.
 
 Open the dashboard at `http://localhost:8000/dashboard`.
+
+The simulation starts automatically at 20 Hz when the application starts. The simulation control endpoints remain available for API clients that need to stop or restart the loop.
 
 Access the interactive API documentation at:
 - Swagger UI: `http://localhost:8000/docs`
@@ -215,7 +217,9 @@ Update the desired reference setpoint.
 
 ---
 
-### Simulation Control
+### Simulation Control API
+
+The application starts the simulation automatically. These endpoints remain available for programmatic clients.
 
 #### `POST /start_simulation`
 Start the simulation loop.
@@ -252,7 +256,7 @@ Stop the simulation loop.
 
 ## Example Workflows
 
-### Workflow 1: Initialize and Run Simulation
+### Workflow 1: Initialize and Run Simulation Through the API
 
 ```bash
 # 1. Initialize model with custom parameters
@@ -278,7 +282,7 @@ curl -X POST "http://localhost:8000/set_setpoint" \
   -H "Content-Type: application/json" \
   -d '{"setpoint": 1.0}'
 
-# 4. Start simulation at 50 Hz
+# 4. Optionally restart the simulation at 50 Hz
 curl -X POST "http://localhost:8000/start_simulation?update_frequency=50"
 
 # 5. Query state in a loop
@@ -294,7 +298,8 @@ curl -X POST "http://localhost:8000/stop_simulation"
 ### Workflow 2: Dynamic PID Tuning
 
 ```bash
-# Start simulation
+# The application starts the simulation automatically. This is optional
+# when the process has been stopped through the API.
 curl -X POST "http://localhost:8000/start_simulation?update_frequency=20"
 
 # Adjust gains while running

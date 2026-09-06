@@ -69,6 +69,22 @@ def run_simulation(update_frequency: float = 10.0):
             model.step(setpoint, Kp, Ki, Kd)
         time.sleep(dt_sim)
 
+def start_simulation_loop(update_frequency: float = 20.0):
+    """Start the simulation loop once and return its current status."""
+    global simulation_running, simulation_thread
+
+    if simulation_running:
+        return {"status": "Simulation already running"}
+
+    simulation_running = True
+    simulation_thread = threading.Thread(
+        target=run_simulation,
+        args=(update_frequency,),
+        daemon=True
+    )
+    simulation_thread.start()
+    return {"status": "Simulation started", "update_frequency_hz": update_frequency}
+
 # Endpoints
 
 @app.on_event("startup")
@@ -77,6 +93,7 @@ async def startup_event():
     global model
     # Default configuration
     model = SOPDT_Model(K=K, tau=tau, zeta=zeta, theta=theta, dt=0.01)
+    start_simulation_loop(update_frequency=20.0)
 
 @app.post("/initialize")
 async def initialize_model(config: ModelConfig):
@@ -188,16 +205,7 @@ async def start_simulation(update_frequency: float = 10.0):
     -----------
     update_frequency : float - Update frequency in Hz (default: 10 Hz)
     """
-    global simulation_running, simulation_thread
-    
-    if simulation_running:
-        return {"status": "Simulation already running"}
-    
-    simulation_running = True
-    simulation_thread = threading.Thread(target=run_simulation, args=(update_frequency,), daemon=True)
-    simulation_thread.start()
-    
-    return {"status": "Simulation started", "update_frequency_hz": update_frequency}
+    return start_simulation_loop(update_frequency)
 
 @app.post("/stop_simulation")
 async def stop_simulation():

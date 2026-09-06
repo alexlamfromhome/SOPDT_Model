@@ -178,70 +178,19 @@ def update_setpoint(sp_val):
     except Exception as e:
         return f"✗ Error: {str(e)}"
 
-def start_sim():
-    """Start simulation via FastAPI"""
-    global monitoring_running, monitoring_thread
-    
-    try:
-        response = requests.post(
-            f"{API_BASE_URL}/start_simulation?update_frequency=20",
-            timeout=2
-        )
-        if response.status_code == 200:
-            if not monitoring_running:
-                monitoring_running = True
-                monitoring_thread = threading.Thread(target=monitor_model, daemon=True)
-                monitoring_thread.start()
-                data = response.json()
-            return f"▶ {data['status']} at {data['update_frequency_hz']} Hz"
-        else:
-            return "✗ Failed to start simulation"
-    except Exception as e:
-        return f"✗ Error: {str(e)}"
-
-def stop_sim():
-    """Stop simulation via FastAPI"""
-    global monitoring_running
-    
-    try:
-        response = requests.post(
-            f"{API_BASE_URL}/stop_simulation",
-            timeout=2
-        )
-        monitoring_running = False
-        if response.status_code == 200:
-            data = response.json()
-            return f"⏹ {data['status']}"
-        else:
-            return "✗ Failed to stop simulation"
-    except Exception as e:
-        return f"✗ Error: {str(e)}"
-
-def reset_sim():
-    """Reset model and data"""
-    global sample_counter, monitoring_running
-    
-    try:
-        response = requests.post(
-            f"{API_BASE_URL}/initialize",
-            timeout=2
-        )
-        monitoring_running = False
-        time.sleep(0.5)
-        
-        time_history.clear()
-        output_history.clear()
-        setpoint_history.clear()
-        control_effort_history.clear()
-        error_history.clear()
-        sample_counter = 0
-        
-        return "🔄 Model and data reset"
-    except Exception as e:
-        return f"✗ Error: {str(e)}"
-
 def refresh_dashboard():
     """Refresh the live plot."""
+    return create_plots()
+
+def initialize_dashboard():
+    """Start dashboard monitoring when the page opens."""
+    global monitoring_running, monitoring_thread
+
+    if not monitoring_running:
+        monitoring_running = True
+        monitoring_thread = threading.Thread(target=monitor_model, daemon=True)
+        monitoring_thread.start()
+
     return create_plots()
 
 # Create Gradio interface
@@ -285,14 +234,6 @@ with gr.Blocks(title="SOPDT PID Controller") as demo:
                 label="Kd (Derivative)",
             )
 
-        with gr.Column():
-            gr.Markdown("### Simulation Control")
-            with gr.Row():
-                start_btn = gr.Button("▶ Start", variant="primary", size="lg")
-                stop_btn = gr.Button("⏹ Stop", variant="stop", size="lg")
-                reset_btn = gr.Button("🔄 Reset", size="lg")
-            sim_status = gr.Textbox(label="Simulation Status", value="Ready", interactive=False)
-        
     # Update controls after the user releases each slider.
     kp_slider.release(
         fn=update_gains,
@@ -312,24 +253,9 @@ with gr.Blocks(title="SOPDT PID Controller") as demo:
         inputs=setpoint_slider,
     )
     
-    start_btn.click(
-        fn=start_sim,
-        outputs=sim_status
-    )
-    
-    stop_btn.click(
-        fn=stop_sim,
-        outputs=sim_status
-    )
-    
-    reset_btn.click(
-        fn=reset_sim,
-        outputs=sim_status
-    )
-    
-    # Load immediately, then refresh the live outputs once per second.
+    # Start monitoring immediately, then refresh the live plot once per second.
     demo.load(
-        fn=refresh_dashboard,
+        fn=initialize_dashboard,
         outputs=plot_output,
     )
     dashboard_timer = gr.Timer(1)
